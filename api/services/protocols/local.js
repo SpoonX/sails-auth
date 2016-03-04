@@ -1,3 +1,5 @@
+var crypto = require('crypto');
+var base64URL = require('base64url');
 var SAError = require('../../../lib/error/SAError.js');
 
 /**
@@ -21,6 +23,10 @@ exports.register = function (user, next) {
   exports.createUser(user, next);
 };
 
+exports.update = function (user, next) {
+  exports.updateUser(user, next);
+};
+
 /**
  * Register a new user
  *
@@ -33,6 +39,7 @@ exports.register = function (user, next) {
  * @param {Function} next
  */
 exports.createUser = function (_user, next) {
+  var accessToken = generateToken();
   var password = _user.password;
   delete _user.password;
 
@@ -51,6 +58,7 @@ exports.createUser = function (_user, next) {
       protocol : 'local'
     , password : password
     , user     : user.id
+    , accessToken: accessToken
     }, function (err, passport) {
       if (err) {
         if (err.code === 'E_VALIDATION') {
@@ -64,6 +72,61 @@ exports.createUser = function (_user, next) {
 
       next(null, user);
     });
+  });
+};
+
+/**
+ * Update an user
+ *
+ * This method updates an user based on its id or username if id is not present
+ * and assign the newly created user a local Passport.
+ *
+ * @param {String}   username
+ * @param {String}   email
+ * @param {String}   password
+ * @param {Function} next
+ */
+exports.updateUser = function (_user, next) {
+  var password = _user.password;
+  delete _user.password;
+
+  var userFinder = _user.hasOwnProperty('id') ? { id: _user.id } : { username: _user.username };
+
+  return sails.models.user.update(userFinder, _user, function (err, user) {
+    if (err) {
+      sails.log(err);
+
+      if (err.code === 'E_VALIDATION') {
+        return next(new SAError({ originalError: err }));
+      }
+
+      return next(err);
+    }
+    // Update retrieves an array
+    user = user[0];
+    // Check if password has a string to replace it
+    if (!!password) {
+      sails.models.passport.findOne({
+        protocol : 'local'
+        ,user:user.id
+      }, function(err, passport){
+        passport.password = password;
+        passport.save(function (err, passport) {
+          if (err) {
+            if (err.code === 'E_VALIDATION') {
+              err = new SAError({ originalError: err });
+            }
+
+            next(err);
+
+          }
+
+          next(null, user);
+        })
+      });
+    } else {
+      next(null, user);
+    }
   });
 };
 
@@ -180,4 +243,8 @@ var EMAIL_REGEX = /^((([a-z]|\d|[!#\$%&'\*\+\-\/=\?\^_`{\|}~]|[\u00A0-\uD7FF\uF9
  */
 function validateEmail (str) {
   return EMAIL_REGEX.test(str);
+}
+
+function generateToken() {
+  return base64URL(crypto.randomBytes(48));
 }
